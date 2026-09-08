@@ -78,6 +78,7 @@ jobs:
           else
             git commit -m "Add downloaded file from Google Drive (ID: ${{ steps.id.outputs.id }})"
             git push
+          fi
 
       - name: Upload artifact (always)
         if: always()
