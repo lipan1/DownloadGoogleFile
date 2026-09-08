@@ -55,6 +55,18 @@ jobs:
             echo "- \`$f\` 鈥?$(numfmt --to=iec --suffix=B $SIZE)" >> $GITHUB_STEP_SUMMARY
           done
 
+      - name: Compute SHA256
+        run: |
+          echo "## SHA256 checksums (of the raw downloaded file)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cd downloads
+          for f in *; do
+            [ -f "$f" ] || continue
+            DIGEST=$(sha256sum "$f" | awk '{print $1}')
+            echo "- \`$f\`: \`$DIGEST\`" >> $GITHUB_STEP_SUMMARY
+            echo "$f  $DIGEST"
+          done
+
       - name: Commit to repo (skip if > 90MB)
         run: |
           OVERSIZE=0
