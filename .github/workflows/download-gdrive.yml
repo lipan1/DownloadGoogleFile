@@ -52,7 +52,7 @@ jobs:
           for f in *; do
             [ -f "$f" ] || continue
             SIZE=$(stat -c%s "$f")
-            echo "- \`$f\` 鈥?$(numfmt --to=iec --suffix=B $SIZE)" >> $GITHUB_STEP_SUMMARY
+            echo "- \`$f\` - $(numfmt --to=iec --suffix=B $SIZE)" >> $GITHUB_STEP_SUMMARY
           done
 
       - name: Compute SHA256
