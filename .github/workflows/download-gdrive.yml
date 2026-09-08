@@ -49,6 +49,7 @@ jobs:
 
       - name: Download from Google Drive
         run: |
+          rm -rf downloads
           mkdir -p downloads
           cd downloads
           KIND="${{ steps.id.outputs.kind }}"
@@ -76,7 +77,7 @@ jobs:
 
       - name: Compute SHA256
         run: |
-          echo "## SHA256 checksums (of the raw downloaded files)" >> $GITHUB_STEP_SUMMARY
+          echo "## SHA256 checksums" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           cd downloads
           find . -type f -print0 | sort -z | while IFS= read -r -d '' f; do
@@ -85,30 +86,29 @@ jobs:
             echo "$f  $DIGEST"
           done
 
-      - name: Commit to repo (skip files > 90MB)
+      - name: Upload to GitHub Release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: gdrive-${{ github.run_id }}
+          name: "Google Drive download #${{ github.run_number }}"
+          make_latest: false
+          body: |
+            Downloaded from Google Drive
+            - kind: ${{ steps.id.outputs.kind }}
+            - source id: ${{ steps.id.outputs.id }}
+            Files and SHA256 checksums are listed in the workflow Summary.
+          files: |
+            downloads/*.pth
+            downloads/**/*.pth
+          fail_on_unmatched_files: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add release link to summary
         run: |
-          OVERSIZE=0
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          while IFS= read -r f; do
-            [ -f "$f" ] || continue
-            SIZE=$(stat -c%s "$f")
-            if [ "$SIZE" -gt 94371840 ]; then
-              echo "::warning::File $f ($(numfmt --to=iec --suffix=B $SIZE)) exceeds GitHub's 100MB limit; skipping commit."
-              OVERSIZE=1
-            else
-              git add "$f"
-            fi
-          done < <(find downloads -type f)
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "Add downloaded file(s) from Google Drive (kind: ${{ steps.id.outputs.kind }})"
-            git push
-          fi
-          if [ "$OVERSIZE" = "1" ]; then
-            echo "::notice::Some files were too large to commit; download them via the workflow artifact."
-          fi
+          echo "## Download links" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Release page: ${{ steps.release.outputs.html_url }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload artifact (always)
         if: always()
