@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       file_id:
-        description: 'Google Drive file ID or URL (default: the configured file)'
+        description: 'Google Drive file ID/URL or folder URL'
         required: true
-        default: '1s212C75bh5QHi5JevNg405cjmeR_rDcI'
+        default: 'https://drive.google.com/drive/folders/1s212C75bh5QHi5JevNg405cjmeR_rDcI'
   push:
     branches: [ main, master ]
     paths: [ '.github/workflows/download-gdrive.yml' ]
@@ -27,69 +27,87 @@ jobs:
       - name: Install gdown
         run: pip install -U gdown
 
-      - name: Resolve file ID
+      - name: Resolve input
         id: id
         run: |
           INPUT="${{ github.event.inputs.file_id || '' }}"
-          [ -z "$INPUT" ] && INPUT="1Ox-51cz9UZGi7S4XiwRyoSGpJegwzcC3"
-          ID=$(printf '%s' "$INPUT" | grep -oP '(?<=/d/)[^/]+|(?<=id=)[^&]+' | head -1)
-          [ -z "$ID" ] && ID="$INPUT"
+          [ -z "$INPUT" ] && INPUT="https://drive.google.com/drive/folders/1s212C75bh5QHi5JevNg405cjmeR_rDcI"
+          KIND=file
+          if echo "$INPUT" | grep -q '/folders/'; then
+            ID=$(printf '%s' "$INPUT" | grep -oP '(?<=/folders/)[^/?]+')
+            KIND=folder
+          elif echo "$INPUT" | grep -q '/d/'; then
+            ID=$(printf '%s' "$INPUT" | grep -oP '(?<=/d/)[^/]+')
+          elif echo "$INPUT" | grep -q 'id='; then
+            ID=$(printf '%s' "$INPUT" | grep -oP '(?<=id=)[^&]+')
+          else
+            ID="$INPUT"
+          fi
           echo "id=$ID" >> $GITHUB_OUTPUT
-          echo "Resolved file ID: $ID"
+          echo "kind=$KIND" >> $GITHUB_OUTPUT
+          echo "Resolved: kind=$KIND id=$ID"
 
       - name: Download from Google Drive
         run: |
           mkdir -p downloads
           cd downloads
-          gdown "https://drive.google.com/uc?id=${{ steps.id.outputs.id }}" || true
-          if ! ls -A . >/dev/null 2>&1; then
+          KIND="${{ steps.id.outputs.kind }}"
+          ID="${{ steps.id.outputs.id }}"
+          if [ "$KIND" = "folder" ]; then
+            gdown --folder "https://drive.google.com/drive/folders/$ID" || true
+          else
+            gdown "https://drive.google.com/uc?id=$ID" || true
+          fi
+          if ! find . -type f | grep -q .; then
             echo "::error::gdown produced no files."
             exit 1
           fi
           echo "## Downloaded files" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          ls -lh
-          for f in *; do
-            [ -f "$f" ] || continue
+          ls -lhR
+          TOTAL=$(find . -type f -printf '%s\n' | awk '{s+=$1} END{print s+0}')
+          COUNT=$(find . -type f | wc -l)
+          find . -type f -print0 | sort -z | while IFS= read -r -d '' f; do
             SIZE=$(stat -c%s "$f")
             echo "- \`$f\` - $(numfmt --to=iec --suffix=B $SIZE)" >> $GITHUB_STEP_SUMMARY
           done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Total:** $(numfmt --to=iec --suffix=B $TOTAL) across $COUNT file(s)" >> $GITHUB_STEP_SUMMARY
 
       - name: Compute SHA256
         run: |
-          echo "## SHA256 checksums (of the raw downloaded file)" >> $GITHUB_STEP_SUMMARY
+          echo "## SHA256 checksums (of the raw downloaded files)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           cd downloads
-          for f in *; do
-            [ -f "$f" ] || continue
+          find . -type f -print0 | sort -z | while IFS= read -r -d '' f; do
             DIGEST=$(sha256sum "$f" | awk '{print $1}')
             echo "- \`$f\`: \`$DIGEST\`" >> $GITHUB_STEP_SUMMARY
             echo "$f  $DIGEST"
           done
 
-      - name: Commit to repo (skip if > 90MB)
+      - name: Commit to repo (skip files > 90MB)
         run: |
           OVERSIZE=0
-          for f in downloads/*; do
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          while IFS= read -r f; do
             [ -f "$f" ] || continue
             SIZE=$(stat -c%s "$f")
             if [ "$SIZE" -gt 94371840 ]; then
               echo "::warning::File $f ($(numfmt --to=iec --suffix=B $SIZE)) exceeds GitHub's 100MB limit; skipping commit."
               OVERSIZE=1
+            else
+              git add "$f"
             fi
-          done
-          if [ "$OVERSIZE" = "1" ]; then
-            echo "Skipping commit due to oversize file(s). Download via the workflow artifact instead."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add downloads/
+          done < <(find downloads -type f)
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "Add downloaded file from Google Drive (ID: ${{ steps.id.outputs.id }})"
+            git commit -m "Add downloaded file(s) from Google Drive (kind: ${{ steps.id.outputs.kind }})"
             git push
+          fi
+          if [ "$OVERSIZE" = "1" ]; then
+            echo "::notice::Some files were too large to commit; download them via the workflow artifact."
           fi
 
       - name: Upload artifact (always)
@@ -97,6 +115,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gdrive-download
-          path: downloads/*
+          path: downloads
           if-no-files-found: error
           retention-days: 30
