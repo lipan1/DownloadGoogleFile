@@ -41,7 +41,11 @@ jobs:
         run: |
           mkdir -p downloads
           cd downloads
-          gdown "https://drive.google.com/uc?id=${{ steps.id.outputs.id }}"
+          gdown "https://drive.google.com/uc?id=${{ steps.id.outputs.id }}" || true
+          if ! ls -A . >/dev/null 2>&1; then
+            echo "::error::gdown produced no files."
+            exit 1
+          fi
           echo "## Downloaded files" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           ls -lh
