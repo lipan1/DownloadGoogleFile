@@ -98,9 +98,7 @@ jobs:
             - kind: ${{ steps.id.outputs.kind }}
             - source id: ${{ steps.id.outputs.id }}
             Files and SHA256 checksums are listed in the workflow Summary.
-          files: |
-            downloads/*.pth
-            downloads/**/*.pth
+          files: downloads/**/*.pth
           fail_on_unmatched_files: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
