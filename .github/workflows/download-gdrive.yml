@@ -6,7 +6,7 @@ on:
       file_id:
         description: 'Google Drive file ID/URL or folder URL'
         required: true
-        default: 'https://drive.google.com/drive/folders/1s212C75bh5QHi5JevNg405cjmeR_rDcI'
+        default: 'https://drive.google.com/file/d/1raLz9TybKGxMCsWVjjdoBnbraUXDgmQ0'
   push:
     branches: [ main, master ]
     paths: [ '.github/workflows/download-gdrive.yml' ]
