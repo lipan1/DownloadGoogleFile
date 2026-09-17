@@ -57,7 +57,7 @@ jobs:
           if [ "$KIND" = "folder" ]; then
             gdown --folder "https://drive.google.com/drive/folders/$ID" || true
           else
-            gdown --fuzzy "https://drive.google.com/file/d/$ID/view" || true
+            gdown --continue --retries 10 "https://drive.google.com/uc?id=$ID" || true
           fi
           if ! find . -type f | grep -q .; then
             echo "::error::gdown produced no files (maybe Google quota-limited or private)."
