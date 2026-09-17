@@ -31,7 +31,7 @@ jobs:
         id: id
         run: |
           INPUT="${{ github.event.inputs.file_id || '' }}"
-          [ -z "$INPUT" ] && INPUT="https://drive.google.com/drive/folders/1s212C75bh5QHi5JevNg405cjmeR_rDcI"
+          [ -z "$INPUT" ] && INPUT="https://drive.google.com/file/d/1raLz9TybKGxMCsWVjjdoBnbraUXDgmQ0"
           KIND=file
           if echo "$INPUT" | grep -q '/folders/'; then
             ID=$(printf '%s' "$INPUT" | grep -oP '(?<=/folders/)[^/?]+')
@@ -57,10 +57,10 @@ jobs:
           if [ "$KIND" = "folder" ]; then
             gdown --folder "https://drive.google.com/drive/folders/$ID" || true
           else
-            gdown "https://drive.google.com/uc?id=$ID" || true
+            gdown --fuzzy "https://drive.google.com/file/d/$ID/view" || true
           fi
           if ! find . -type f | grep -q .; then
-            echo "::error::gdown produced no files."
+            echo "::error::gdown produced no files (maybe Google quota-limited or private)."
             exit 1
           fi
           echo "## Downloaded files" >> $GITHUB_STEP_SUMMARY
@@ -68,12 +68,19 @@ jobs:
           ls -lhR
           TOTAL=$(find . -type f -printf '%s\n' | awk '{s+=$1} END{print s+0}')
           COUNT=$(find . -type f | wc -l)
+          MAXF=$(find . -type f -printf '%s\n' | sort -nr | head -1)
           find . -type f -print0 | sort -z | while IFS= read -r -d '' f; do
             SIZE=$(stat -c%s "$f")
             echo "- \`$f\` - $(numfmt --to=iec --suffix=B $SIZE)" >> $GITHUB_STEP_SUMMARY
           done
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Total:** $(numfmt --to=iec --suffix=B $TOTAL) across $COUNT file(s)" >> $GITHUB_STEP_SUMMARY
+          echo "**Total:** $(numfmt --to=iec --suffix=B $TOTAL) across $COUNT file(s); largest: $(numfmt --to=iec --suffix=B $MAXF)" >> $GITHUB_STEP_SUMMARY
+          if [ "$MAXF" -gt 2030105544 ]; then
+            echo "::notice::Largest file exceeds GitHub Release 2GB limit; skipping Release, using artifact only."
+            echo "do_release=false" >> $GITHUB_ENV
+          else
+            echo "do_release=true" >> $GITHUB_ENV
+          fi
 
       - name: Compute SHA256
         run: |
@@ -86,8 +93,9 @@ jobs:
             echo "$f  $DIGEST"
           done
 
-      - name: Upload to GitHub Release
+      - name: Upload to GitHub Release (skipped if any file > 1.9 GB)
         id: release
+        if: env.do_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: gdrive-${{ github.run_id }}
@@ -99,14 +107,20 @@ jobs:
             - source id: ${{ steps.id.outputs.id }}
             Files and SHA256 checksums are listed in the workflow Summary.
           files: downloads/**/*.pth
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Add release link to summary
+      - name: Add download info to summary
+        if: always()
         run: |
           echo "## Download links" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Release page: ${{ steps.release.outputs.html_url }}" >> $GITHUB_STEP_SUMMARY
+          URL="${{ steps.release.outputs.html_url }}"
+          if [ -n "$URL" ]; then
+            echo "Release page: $URL" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Skipped GitHub Release (file too large for 2GB limit, or step skipped). Download via the Artifacts section below." >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Upload artifact (always)
         if: always()
