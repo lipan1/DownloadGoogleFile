@@ -68,23 +68,16 @@ jobs:
           ls -lhR
           TOTAL=$(find . -type f -printf '%s\n' | awk '{s+=$1} END{print s+0}')
           COUNT=$(find . -type f | wc -l)
-          MAXF=$(find . -type f -printf '%s\n' | sort -nr | head -1)
           find . -type f -print0 | sort -z | while IFS= read -r -d '' f; do
             SIZE=$(stat -c%s "$f")
             echo "- \`$f\` - $(numfmt --to=iec --suffix=B $SIZE)" >> $GITHUB_STEP_SUMMARY
           done
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Total:** $(numfmt --to=iec --suffix=B $TOTAL) across $COUNT file(s); largest: $(numfmt --to=iec --suffix=B $MAXF)" >> $GITHUB_STEP_SUMMARY
-          if [ "$MAXF" -gt 2030105544 ]; then
-            echo "::notice::Largest file exceeds GitHub Release 2GB limit; skipping Release, using artifact only."
-            echo "do_release=false" >> $GITHUB_ENV
-          else
-            echo "do_release=true" >> $GITHUB_ENV
-          fi
+          echo "**Total:** $(numfmt --to=iec --suffix=B $TOTAL) across $COUNT file(s)" >> $GITHUB_STEP_SUMMARY
 
-      - name: Compute SHA256
+      - name: Compute SHA256 (original files)
         run: |
-          echo "## SHA256 checksums" >> $GITHUB_STEP_SUMMARY
+          echo "## SHA256 checksums (original files)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           cd downloads
           find . -type f -print0 | sort -z | while IFS= read -r -d '' f; do
@@ -93,9 +86,36 @@ jobs:
             echo "$f  $DIGEST"
           done
 
-      - name: Upload to GitHub Release (skipped if any file > 1.9 GB)
+      - name: Split by size (small <=1.9GB -> Release, large >1.9GB -> artifact)
+        run: |
+          rm -rf release_assets artifact_assets
+          mkdir -p release_assets artifact_assets
+          cd downloads
+          SMALL=0; LARGE=0
+          while IFS= read -r -d '' f; do
+            rel="${f#./}"
+            SIZE=$(stat -c%s "$f")
+            dir="$(dirname "$rel")"
+            if [ "$SIZE" -gt 2030105544 ]; then
+              mkdir -p "../artifact_assets/$dir"
+              cp "$f" "../artifact_assets/$rel"
+              LARGE=$((LARGE+1))
+            else
+              mkdir -p "../release_assets/$dir"
+              cp "$f" "../release_assets/$rel"
+              SMALL=$((SMALL+1))
+            fi
+          done < <(find . -type f -print0 | sort -z)
+          if [ "$SMALL" -gt 0 ]; then echo "has_small=true" >> $GITHUB_ENV; else echo "has_small=false" >> $GITHUB_ENV; fi
+          if [ "$LARGE" -gt 0 ]; then echo "has_large=true" >> $GITHUB_ENV; else echo "has_large=false" >> $GITHUB_ENV; fi
+          echo "## Distribution by size" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Small (<=1.9GB -> Release, public): $SMALL file(s)" >> $GITHUB_STEP_SUMMARY
+          echo "- Large (>1.9GB -> artifact, collaborators only): $LARGE file(s)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload small files to GitHub Release (public)
         id: release
-        if: env.do_release == 'true'
+        if: env.has_small == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: gdrive-${{ github.run_id }}
@@ -105,8 +125,10 @@ jobs:
             Downloaded from Google Drive
             - kind: ${{ steps.id.outputs.kind }}
             - source id: ${{ steps.id.outputs.id }}
-            Files and SHA256 checksums are listed in the workflow Summary.
-          files: downloads/**/*.pth
+            Only files <= 1.9GB are attached here (GitHub Release 2GB/asset limit).
+            Larger files are in the workflow artifact (collaborators only).
+            SHA256 of all original files are in the workflow Summary.
+          files: release_assets/**
           fail_on_unmatched_files: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -117,16 +139,19 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           URL="${{ steps.release.outputs.html_url }}"
           if [ -n "$URL" ]; then
-            echo "Release page: $URL" >> $GITHUB_STEP_SUMMARY
+            echo "Release page (public, small files, each downloadable separately): $URL" >> $GITHUB_STEP_SUMMARY
           else
-            echo "Skipped GitHub Release (file too large for 2GB limit, or step skipped). Download via the Artifacts section below." >> $GITHUB_STEP_SUMMARY
+            echo "No small files for Release (all large, or step skipped)." >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ env.has_large }}" = "true" ]; then
+            echo "Large files: download the 'gdrive-large' artifact below (collaborators only, 30 days)." >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Upload artifact (always)
-        if: always()
+      - name: Upload large files to artifact (collaborators only)
+        if: always() && env.has_large == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: gdrive-download
-          path: downloads
-          if-no-files-found: error
+          name: gdrive-large
+          path: artifact_assets
+          if-no-files-found: ignore
           retention-days: 30
