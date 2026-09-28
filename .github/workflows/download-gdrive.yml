@@ -1,4 +1,4 @@
-name: Download from Google Drive
+name: Download From Google Drive
 
 on:
   workflow_dispatch:
