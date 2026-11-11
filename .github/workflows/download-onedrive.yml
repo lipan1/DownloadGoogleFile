@@ -1,0 +1,64 @@
+name: Download from OneDrive
+
+on:
+  workflow_dispatch:
+    inputs:
+      share_url:
+        description: 'OneDrive share URL (1drv.ms or onedrive.live.com)'
+        required: true
+        default: 'https://1drv.ms/u/s!AimBgYV7JjTlgSMjp1_NrV3VRSmK?e=Q1uZKs'
+  push:
+    branches: [ main, master ]
+    paths: [ '.github/workflows/download-onedrive.yml' ]
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Discover redirect chain
+        run: |
+          URL="${{ github.event.inputs.share_url || 'https://1drv.ms/u/s!AimBgYV7JjTlgSMjp1_NrV3VRSmK?e=Q1uZKs' }}"
+          echo "## Input URL" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "$URL" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Redirect chain (HEAD)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          curl -sIL --max-redirs 20 "$URL" 2>&1 | tee -a $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Try classic direct download URL
+        run: |
+          mkdir -p downloads
+          DL="https://onedrive.live.com/download?resid=E534267B85818129!163&authkey=!AimBgYV7JjTlgSMjp1_NrV3VRSmK"
+          echo "Trying: $DL"
+          curl -L --max-time 1200 "$DL" -o downloads/file.bin 2>&1 | tail -5 || true
+          echo "## Download result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f downloads/file.bin ]; then
+            SZ=$(stat -c%s downloads/file.bin)
+            echo "- file.bin size: $(numfmt --to=iec --suffix=B $SZ) ($SZ bytes)" >> $GITHUB_STEP_SUMMARY
+            echo "- file type: $(file -b downloads/file.bin)" >> $GITHUB_STEP_SUMMARY
+            echo "- first 200 chars:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            head -c 200 downloads/file.bin | strings | head -5 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- no file produced" >> $GITHUB_STEP_SUMMARY
+          fi
+          ls -lh downloads || true
+
+      - name: Upload artifact (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onedrive-download
+          path: downloads
+          if-no-files-found: ignore
+          retention-days: 30
