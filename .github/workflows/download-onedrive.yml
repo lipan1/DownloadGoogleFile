@@ -20,45 +20,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Discover redirect chain
+      - name: Resolve share to final URL (GET, cookies, browser UA)
         run: |
-          URL="${{ github.event.inputs.share_url || 'https://1drv.ms/u/s!AimBgYV7JjTlgSMjp1_NrV3VRSmK?e=Q1uZKs' }}"
-          echo "## Input URL" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "$URL" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Redirect chain (HEAD)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          curl -sIL --max-redirs 20 "$URL" 2>&1 | tee -a $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-      - name: Try classic direct download URL
-        run: |
+          FULL="https://onedrive.live.com/:u:/g/personal/E534267B85818129/s!AimBgYV7JjTlgSMjp1_NrV3VRSmK?resid=E534267B85818129!163&e=Q1uZKs&migratedtospo=true&redeem=aHR0cHM6Ly8xZHJ2Lm1zL3UvcyFBaW1CZ1lWN0pqVGxnU01qcDFfTnJWM1ZUU21LP2U9UTF1Wktz"
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
           mkdir -p downloads
-          DL="https://onedrive.live.com/download?resid=E534267B85818129!163&authkey=!AimBgYV7JjTlgSMjp1_NrV3VRSmK"
-          echo "Trying: $DL"
-          curl -L --max-time 1200 "$DL" -o downloads/file.bin 2>&1 | tail -5 || true
-          echo "## Download result" >> $GITHUB_STEP_SUMMARY
+          echo "## GET with cookies + browser UA (follow redirects)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f downloads/file.bin ]; then
-            SZ=$(stat -c%s downloads/file.bin)
-            echo "- file.bin size: $(numfmt --to=iec --suffix=B $SZ) ($SZ bytes)" >> $GITHUB_STEP_SUMMARY
-            echo "- file type: $(file -b downloads/file.bin)" >> $GITHUB_STEP_SUMMARY
-            echo "- first 200 chars:" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            head -c 200 downloads/file.bin | strings | head -5 >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- no file produced" >> $GITHUB_STEP_SUMMARY
-          fi
-          ls -lh downloads || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          curl -sL -A "$UA" -c cookies.txt -b cookies.txt --max-redirs 20 -D hdr.txt "$FULL" -o page.html 2>&1
+          echo "--- response headers ---" >> $GITHUB_STEP_SUMMARY
+          cat hdr.txt >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "--- page.html size: $(stat -c%s page.html 2>/dev/null) bytes ---" >> $GITHUB_STEP_SUMMARY
+          echo "--- sharepoint URLs found in page ---" >> $GITHUB_STEP_SUMMARY
+          grep -oE 'https://[^"'"'"' <>]*sharepoint[^"'"'"' <>]*' page.html | sort -u | head -30 >> $GITHUB_STEP_SUMMARY || echo "(none)"
+          echo "--- download URLs found in page ---" >> $GITHUB_STEP_SUMMARY
+          grep -oE 'https://[^"'"'"' <>]*download[^"'"'"' <>]*' page.html | sort -u | head -30 >> $GITHUB_STEP_SUMMARY || echo "(none)"
+          echo "--- guestaccess URLs ---" >> $GITHUB_STEP_SUMMARY
+          grep -oE 'https://[^"'"'"' <>]*guestaccess[^"'"'"' <>]*' page.html | sort -u | head -10 >> $GITHUB_STEP_SUMMARY || echo "(none)"
+          echo "--- final effective URL ---" >> $GITHUB_STEP_SUMMARY
+          curl -s -o /dev/null -A "$UA" -c cookies.txt -b cookies.txt --max-redirs 20 -w '%{url_effective}\n' "$FULL" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cp page.html downloads/ 2>/dev/null || true
+          cp cookies.txt downloads/ 2>/dev/null || true
+          cp hdr.txt downloads/ 2>/dev/null || true
 
       - name: Upload artifact (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: onedrive-download
+          name: onedrive-discovery
           path: downloads
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 7
