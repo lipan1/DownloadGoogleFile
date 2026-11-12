@@ -20,60 +20,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Redeem share + try download with cookie
+      - name: Redeem then inspect download HTML
         run: |
           FULL="https://onedrive.live.com/:u:/g/personal/E534267B85818129/s!AimBgYV7JjTlgSMjp1_NrV3VRSmK?resid=E534267B85818129!163&e=Q1uZKs&migratedtospo=true&redeem=aHR0cHM6Ly8xZHJ2Lm1zL3UvcyFBaW1CZ1lWN0pqVGxnU01qcDFfTnJWM1ZUU21LP2U9UTF1Wktz"
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-          CID="E534267B85818129"
           RESID="E534267B85818129!163"
           AUTHKEY="!AimBgYV7JjTlgSMjp1_NrV3VRSmK"
           mkdir -p downloads
-          echo "## 1. Redeem (get FedAuth cookie)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           curl -sL -A "$UA" -c cookies.txt -b cookies.txt --max-redirs 20 "$FULL" -o page.html
-          if grep -q FedAuth cookies.txt; then echo "FedAuth cookie: OK" >> $GITHUB_STEP_SUMMARY; else echo "FedAuth cookie: MISSING" >> $GITHUB_STEP_SUMMARY; fi
-          echo "page.html size: $(stat -c%s page.html) bytes" >> $GITHUB_STEP_SUMMARY
+          DL="https://onedrive.live.com/download?resid=${RESID}&authkey=${AUTHKEY}"
+          curl -sL -A "$UA" -b cookies.txt -D dl_hdr.txt --max-time 300 "$DL" -o dl.html
+          echo "## download? response headers" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat dl_hdr.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "dl.html size: $(stat -c%s dl.html) bytes" >> $GITHUB_STEP_SUMMARY
 
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 2. Grep page for download hints" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "--- @content.downloadUrl ---" >> $GITHUB_STEP_SUMMARY
-          grep -oE '"@content\.downloadUrl"[^,}]*' page.html | head -3 >> $GITHUB_STEP_SUMMARY || echo "(none)"
-          echo "--- downloadUrl ---" >> $GITHUB_STEP_SUMMARY
-          grep -oE '"downloadUrl"[^,}]*' page.html | head -3 >> $GITHUB_STEP_SUMMARY || echo "(none)"
-          echo "--- download? URLs ---" >> $GITHUB_STEP_SUMMARY
-          grep -oE 'https?://[^"'"'"' <>]*download\?[^"'"'"' <>]*' page.html | head -10 >> $GITHUB_STEP_SUMMARY || echo "(none)"
-          echo "--- vitpose/.pth refs ---" >> $GITHUB_STEP_SUMMARY
-          grep -oE '[^"'"'"' <>]*\.pth[^"'"'"' <>]*' page.html | head -10 >> $GITHUB_STEP_SUMMARY || echo "(none)"
-          echo "--- accessToken ---" >> $GITHUB_STEP_SUMMARY
-          grep -oE '"accessToken"[^,}]*' page.html | head -2 >> $GITHUB_STEP_SUMMARY || echo "(none)"
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
+          echo "## Inspect dl.html" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 3. Try download URL variants with cookie" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "--- title ---" >> $GITHUB_STEP_SUMMARY
+          grep -oE '<title>[^<]*</title>' dl.html | head -2 >> $GITHUB_STEP_SUMMARY || echo "(none)"
+          echo "--- meta refresh / window.location ---" >> $GITHUB_STEP_SUMMARY
+          grep -oE '<meta[^>]*http-equiv=["'"'"']?refresh["'"'"']?[^>]*>' dl.html | head -3 >> $GITHUB_STEP_SUMMARY || echo "(none)"
+          grep -oE 'window\.location[^;]*' dl.html | head -3 >> $GITHUB_STEP_SUMMARY || echo "(none)"
+          echo "--- sharepoint URLs ---" >> $GITHUB_STEP_SUMMARY
+          grep -oE 'https://[^"'"'"' <>\\]*sharepoint[^"'"'"' <>\\]*' dl.html | sort -u | head -20 >> $GITHUB_STEP_SUMMARY || echo "(none)"
+          echo "--- download.aspx / guestaccess URLs ---" >> $GITHUB_STEP_SUMMARY
+          grep -oE 'https://[^"'"'"' <>\\]*(download\.aspx|guestaccess)[^"'"'"' <>\\]*' dl.html | sort -u | head -20 >> $GITHUB_STEP_SUMMARY || echo "(none)"
+          echo "--- blob/core/permalink URLs ---" >> $GITHUB_STEP_SUMMARY
+          grep -oE 'https://[^"'"'"' <>\\]*(blob|core|permalink|\.live\.com/download)[^"'"'"' <>\\]*' dl.html | sort -u | head -20 >> $GITHUB_STEP_SUMMARY || echo "(none)"
+          echo "--- first 1500 chars (text only) ---" >> $GITHUB_STEP_SUMMARY
+          sed -e 's/<[^>]*>//g' dl.html | tr -s ' \n' ' ' | head -c 1500 >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          i=0
-          for U in \
-            "https://onedrive.live.com/download?resid=${RESID}&authkey=${AUTHKEY}" \
-            "https://onedrive.live.com/download?cid=${CID}&resid=${RESID}&authkey=${AUTHKEY}" \
-            "https://onedrive.live.com/download?cid=${CID}&resid=${RESID}" \
-            "https://onedrive.live.com/download?id=${RESID}&cid=${CID}&authkey=${AUTHKEY}"; do
-            i=$((i+1))
-            curl -sL -A "$UA" -b cookies.txt --max-time 900 "$U" -o "downloads/v${i}.bin" 2>&1
-            SZ=$(stat -c%s "downloads/v${i}.bin" 2>/dev/null || echo 0)
-            FT=$(file -b "downloads/v${i}.bin" 2>/dev/null || echo "?")
-            echo "- v${i}: ${SZ} bytes, ${FT}" >> $GITHUB_STEP_SUMMARY
-            echo "  URL: ${U}" >> $GITHUB_STEP_SUMMARY
-          done
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cp dl.html downloads/ 2>/dev/null || true
+          cp dl_hdr.txt downloads/ 2>/dev/null || true
           cp page.html downloads/ 2>/dev/null || true
           cp cookies.txt downloads/ 2>/dev/null || true
-          ls -lh downloads || true
 
       - name: Upload artifact (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: onedrive-download
+          name: onedrive-inspect
           path: downloads
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 7
